@@ -1,0 +1,3 @@
+# Dependências do projeto P2P
+# O projeto utiliza bibliotecas padrão do Python (socket, threading, json, hashlib)
+
