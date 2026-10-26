@@ -10,9 +10,18 @@ class PeerNode:
         self.port = port
         self.metadata = Metadata.fromJsonFile(metadataPath)
         self.isSeeder = isSeeder
-        
         self.hasBlock = [isSeeder for _ in range(self.metadata.totalBlocks)]
         self.lock = threading.Lock()
+        
+        self.fileName = self.metadata.fileName
+        if self.isSeeder:
+            if not os.path.exists(self.fileName):
+                with open(self.fileName, "wb") as f:
+                    f.write(os.urandom(self.metadata.fileSize))
+        else:
+            self.fileName = "downloaded_" + self.metadata.fileName
+            with open(self.fileName, "wb") as f:
+                f.write(b"\x00" * self.metadata.fileSize)
 
     def handleIncomingConnection(self, clientSocket, clientAddress):
         try:
@@ -29,9 +38,12 @@ class PeerNode:
                         hasIt = self.hasBlock[blockIndex]
                     
                     if hasIt:
-                        clientSocket.send(b"BLOCK_DATA_FOUND")
+                        with open(self.metadata.fileName, "rb") as f:
+                            f.seek(blockIndex * self.metadata.blockSize)
+                            blockData = f.read(self.metadata.blockSize)
+                        clientSocket.sendall(blockData)
                     else:
-                        clientSocket.send(b"BLOCK_NOT_FOUND")
+                        clientSocket.sendall(b"")
         except Exception:
             pass
         finally:
@@ -61,9 +73,27 @@ class PeerNode:
         try:
             client.connect((peerHost, peerPort))
             requestMsg = f"GET_BLOCK:{blockIndex}"
-            client.send(requestMsg.encode("utf-8"))
-            response = client.recv(4096)
-            print(f"Resposta do bloco {blockIndex}: {response.decode('utf-8')}")
+            client.sendall(requestMsg.encode("utf-8"))
+            
+            blockData = b""
+            while len(blockData) < self.metadata.blockSize:
+                packet = client.recv(self.metadata.blockSize - len(blockData))
+                if not packet:
+                    break
+                blockData += packet
+            
+            if blockData:
+                with open(self.fileName, "r+b") as f:
+                    f.seek(blockIndex * self.metadata.blockSize)
+                    f.write(blockData)
+                
+                with self.lock:
+                    self.hasBlock[blockIndex] = True
+                print(f"Bloco {blockIndex} baixado e salvo com sucesso.")
+            else:
+                print(f"Bloco {blockIndex} nao encontrado no peer.")
+        except Exception as e:
+            print(f"Erro ao baixar bloco: {e}")
         finally:
             client.close()
 
