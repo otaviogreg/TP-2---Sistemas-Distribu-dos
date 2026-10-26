@@ -20,6 +20,18 @@ class PeerNode:
                 data = clientSocket.recv(4096)
                 if not data:
                     break
+                
+                message = data.decode("utf-8", errors="ignore")
+                if message.startswith("GET_BLOCK:"):
+                    blockIndex = int(message.split(":")[1])
+                    
+                    with self.lock:
+                        hasIt = self.hasBlock[blockIndex]
+                    
+                    if hasIt:
+                        clientSocket.send(b"BLOCK_DATA_FOUND")
+                    else:
+                        clientSocket.send(b"BLOCK_NOT_FOUND")
         except Exception:
             pass
         finally:
@@ -44,11 +56,14 @@ class PeerNode:
                 break
         server.close()
 
-    def connectToPeer(self, peerHost, peerPort):
+    def requestBlock(self, peerHost, peerPort, blockIndex):
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             client.connect((peerHost, peerPort))
-            client.send(b"Hello from peer")
+            requestMsg = f"GET_BLOCK:{blockIndex}"
+            client.send(requestMsg.encode("utf-8"))
+            response = client.recv(4096)
+            print(f"Resposta do bloco {blockIndex}: {response.decode('utf-8')}")
         finally:
             client.close()
 
@@ -63,11 +78,10 @@ class PeerNode:
                 continue
             if cmd[0] == "sair":
                 break
-            elif cmd[0] == "conectar" and len(cmd) == 3:
-                self.connectToPeer(cmd[1], int(cmd[2]))
+            elif cmd[0] == "pedir" and len(cmd) == 4:
+                self.requestBlock(cmd[1], int(cmd[2]), int(cmd[3]))
             elif cmd[0] == "status":
                 with self.lock:
-                    print(f"Total blocks: {self.metadata.totalBlocks}")
                     print(f"Has blocks: {self.hasBlock}")
 
 if __name__ == "__main__":
