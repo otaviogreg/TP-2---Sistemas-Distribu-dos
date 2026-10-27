@@ -1,27 +1,38 @@
+import argparse
 import hashlib
 import json
 import os
 import socket
-import sys
 import threading
+import time
 
 from metadata import Metadata
 
 
 class PeerNode:
+    CONNECT_TIMEOUT = 3
     SOCKET_TIMEOUT = 10
     MAX_HEADER_SIZE = 4096
+    MAX_DOWNLOAD_ROUNDS = 3
+    DOWNLOAD_RETRY_DELAY = 2
 
-    def __init__(self, host, port, metadataPath, isSeeder=False, sourcePath=None):
-        self.host = host
-        self.port = port
+    def __init__(self, peerId, metadataPath, peersPath, sourcePath=None):
+        if isinstance(peerId, str):
+            peerId = peerId.strip()
+        self.peerId = peerId
         self.metadata = Metadata.fromJsonFile(metadataPath)
-        self.isSeeder = isSeeder
+        self.isSeeder = sourcePath is not None
+        self.host = "0.0.0.0"
+        self.port, self.advertisedHost, self.peers = self._loadPeerConfig(peersPath, peerId)
         self.lock = threading.Lock()
         self.stopEvent = threading.Event()
+        self.listenerReady = threading.Event()
+        self.listenerError = None
+        self.downloadLock = threading.Lock()
+        self.downloadThread = None
 
         if self.isSeeder:
-            if not sourcePath or not os.path.isfile(sourcePath):
+            if not os.path.isfile(sourcePath):
                 raise FileNotFoundError("Informe um arquivo existente para iniciar o seeder.")
             self.fileName = sourcePath
             self._verifySourceFile()
@@ -33,6 +44,49 @@ class PeerNode:
         self.hasBlock = [self.isSeeder for _ in range(self.metadata.totalBlocks)]
         if not self.metadata.totalBlocks:
             self.verifyCompleteFile()
+
+    @staticmethod
+    def _loadPeerConfig(peersPath, peerId):
+        with open(peersPath, "r", encoding="utf-8") as peersFile:
+            configuration = json.load(peersFile)
+
+        if not isinstance(configuration, dict) or not isinstance(configuration.get("peers"), list):
+            raise ValueError("O arquivo de peers deve conter uma lista 'peers'.")
+        if not isinstance(peerId, str) or not peerId.strip():
+            raise ValueError("Informe um ID de peer válido.")
+
+        peerEntries = {}
+        for peer in configuration["peers"]:
+            if not isinstance(peer, dict):
+                raise ValueError("Cada peer deve ser um objeto JSON.")
+            currentId = peer.get("id")
+            if not isinstance(currentId, str) or not currentId.strip():
+                raise ValueError("Cada peer deve possuir um ID válido.")
+            if currentId in peerEntries:
+                raise ValueError(f"ID de peer duplicado: {currentId}.")
+            peerEntries[currentId] = peer
+
+        if peerId not in peerEntries:
+            raise ValueError(f"O ID '{peerId}' não está cadastrado em {peersPath}.")
+
+        activePeers = []
+        localPeer = None
+        for currentId, peer in peerEntries.items():
+            host = peer.get("host")
+            port = peer.get("port")
+            if currentId == peerId:
+                if not isinstance(host, str) or not host.strip() or type(port) is not int or not 1 <= port <= 65535:
+                    raise ValueError(f"Configure host e porta válidos para o peer '{peerId}'.")
+                localPeer = peer
+                continue
+
+            if not host and port is None:
+                continue
+            if not isinstance(host, str) or not host.strip() or type(port) is not int or not 1 <= port <= 65535:
+                raise ValueError(f"Configuração inválida para o peer '{currentId}'.")
+            activePeers.append({"id": currentId, "host": host.strip(), "port": port})
+
+        return localPeer["port"], localPeer["host"].strip(), activePeers
 
     def _expectedBlockSize(self, blockIndex):
         return min(
@@ -164,6 +218,7 @@ class PeerNode:
         try:
             server.bind((self.host, self.port))
             server.listen()
+            self.listenerReady.set()
             print(f"Peer escutando em {self.host}:{self.port}.")
             while not self.stopEvent.is_set():
                 try:
@@ -178,37 +233,34 @@ class PeerNode:
                 clientThread.start()
         except OSError as error:
             if not self.stopEvent.is_set():
+                self.listenerError = error
                 print(f"Erro no servidor: {error}")
         finally:
+            self.listenerReady.set()
             server.close()
 
-    def requestBlock(self, peerHost, peerPort, blockIndex):
+    def requestBlock(self, peer, blockIndex):
         if type(blockIndex) is not int or blockIndex < 0 or blockIndex >= self.metadata.totalBlocks:
             print(f"Índice de bloco inválido: {blockIndex}.")
-            return False
-        try:
-            peerPort = int(peerPort)
-        except (TypeError, ValueError):
-            print("A porta do peer deve ser um número inteiro.")
-            return False
-        if peerPort < 1 or peerPort > 65535:
-            print("A porta do peer deve estar entre 1 e 65535.")
-            return False
+            return "failed"
 
         with self.lock:
             if self.hasBlock[blockIndex]:
-                print(f"O bloco {blockIndex} já está disponível localmente.")
-                return True
+                return "received"
 
         expectedSize = self._expectedBlockSize(blockIndex)
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client.settimeout(self.SOCKET_TIMEOUT)
+        client.settimeout(self.CONNECT_TIMEOUT)
         try:
-            client.connect((peerHost, int(peerPort)))
+            client.connect((peer["host"], peer["port"]))
+            client.settimeout(self.SOCKET_TIMEOUT)
             self._sendMessage(client, {"type": "GET_BLOCK", "blockIndex": blockIndex})
             response = self._receiveMessage(client)
             if response.get("type") == "ERROR":
-                raise ValueError(response.get("reason", "O peer recusou a requisição."))
+                reason = response.get("reason", "O peer recusou a requisição.")
+                if reason == "Bloco indisponível neste peer.":
+                    return "unavailable"
+                raise ValueError(reason)
             if (
                 response.get("type") != "BLOCK"
                 or type(response.get("blockIndex")) is not int
@@ -252,16 +304,81 @@ class PeerNode:
             else:
                 print(f"Bloco {blockIndex} recebido, verificado e confirmado.")
 
-            with self.lock:
-                allBlocksAvailable = all(self.hasBlock)
-            if allBlocksAvailable:
-                self.verifyCompleteFile()
-            return True
+            return "received"
         except (OSError, ValueError, ConnectionError, socket.timeout) as error:
-            print(f"Erro ao baixar o bloco {blockIndex}: {error}")
-            return False
+            print(f"Erro ao baixar o bloco {blockIndex} do peer {peer['id']}: {error}")
+            return "failed"
         finally:
             client.close()
+
+    def _roleName(self):
+        with self.lock:
+            availableBlocks = list(self.hasBlock)
+        if all(availableBlocks):
+            return "seeder"
+        if any(availableBlocks):
+            return "leecher/seeder parcial"
+        return "leecher"
+
+    def startDownload(self):
+        if self.isSeeder:
+            print("Este peer já possui o arquivo de origem completo.")
+            return
+        with self.lock:
+            allBlocksAvailable = all(self.hasBlock)
+        if allBlocksAvailable:
+            self.verifyCompleteFile()
+            return
+        if not self.peers:
+            print("Nenhum vizinho está configurado em peers.json.")
+            return
+        if not self.downloadLock.acquire(blocking=False):
+            print("O download automático já está em andamento.")
+            return
+
+        self.downloadThread = threading.Thread(target=self.downloadMissingBlocks, daemon=True)
+        self.downloadThread.start()
+
+    def downloadMissingBlocks(self):
+        try:
+            for roundNumber in range(1, self.MAX_DOWNLOAD_ROUNDS + 1):
+                with self.lock:
+                    missingBlocks = [index for index, available in enumerate(self.hasBlock) if not available]
+                if not missingBlocks:
+                    self.verifyCompleteFile()
+                    return
+
+                failedPeers = set()
+                downloadedAny = False
+                for blockIndex in missingBlocks:
+                    if self.stopEvent.is_set():
+                        return
+                    for peer in self.peers:
+                        if peer["id"] in failedPeers:
+                            continue
+                        result = self.requestBlock(peer, blockIndex)
+                        if result == "received":
+                            downloadedAny = True
+                            break
+                        if result == "failed":
+                            failedPeers.add(peer["id"])
+
+                with self.lock:
+                    allBlocksAvailable = all(self.hasBlock)
+                    remainingBlocks = [index for index, available in enumerate(self.hasBlock) if not available]
+                if allBlocksAvailable:
+                    self.verifyCompleteFile()
+                    return
+
+                print(f"Tentativa {roundNumber}/{self.MAX_DOWNLOAD_ROUNDS}: blocos faltantes {remainingBlocks}.")
+                if roundNumber < self.MAX_DOWNLOAD_ROUNDS and (downloadedAny or remainingBlocks):
+                    time.sleep(self.DOWNLOAD_RETRY_DELAY)
+
+            with self.lock:
+                remainingBlocks = [index for index, available in enumerate(self.hasBlock) if not available]
+            print(f"Download parcial. Blocos ainda faltantes: {remainingBlocks}. Use 'baixar' para tentar novamente.")
+        finally:
+            self.downloadLock.release()
 
     def verifyCompleteFile(self):
         with self.lock:
@@ -303,7 +420,19 @@ class PeerNode:
     def start(self):
         listenerThread = threading.Thread(target=self.startListener, daemon=True)
         listenerThread.start()
-        print("Comandos: pedir <host> <porta> <bloco>, status, sair")
+        if not self.listenerReady.wait(timeout=5):
+            print("O servidor não iniciou dentro do tempo esperado.")
+            self.stopEvent.set()
+            return
+        if self.listenerError:
+            self.stopEvent.set()
+            return
+
+        print(f"Peer {self.peerId} ativo em {self.advertisedHost}:{self.port}.")
+        print(f"Papel atual: {self._roleName()}.")
+        if not self.isSeeder:
+            self.startDownload()
+        print("Comandos: baixar, status, sair")
         try:
             while True:
                 try:
@@ -314,27 +443,35 @@ class PeerNode:
                     continue
                 if command[0] == "sair":
                     break
-                if command[0] == "pedir" and len(command) == 4:
-                    try:
-                        self.requestBlock(command[1], int(command[2]), int(command[3]))
-                    except ValueError:
-                        print("Porta e índice do bloco devem ser números inteiros.")
+                if command[0] == "baixar":
+                    self.startDownload()
                 elif command[0] == "status":
                     with self.lock:
-                        print(f"Blocos disponíveis: {self.hasBlock}")
+                        availableBlocks = list(self.hasBlock)
+                    print(f"Peer {self.peerId} | papel: {self._roleName()} | blocos: {availableBlocks}")
                 else:
-                    print("Comando inválido. Use: pedir <host> <porta> <bloco>, status, sair")
+                    print("Comando inválido. Use: baixar, status, sair")
         except KeyboardInterrupt:
             print("Encerrando peer.")
         finally:
             self.stopEvent.set()
             listenerThread.join(timeout=2)
+            if self.downloadThread:
+                self.downloadThread.join(timeout=2)
 
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
-    isSeeder = sys.argv[2].lower() == "true" if len(sys.argv) > 2 else False
-    sourcePath = sys.argv[3] if len(sys.argv) > 3 else None
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--peer-id", required=True)
+    parser.add_argument("--peers", default="peers.json")
+    parser.add_argument("--metadata", default="metadata.json")
+    parser.add_argument("--seed-file")
+    arguments = parser.parse_args()
 
-    node = PeerNode("0.0.0.0", port, "metadata.json", isSeeder, sourcePath)
+    node = PeerNode(
+        peerId=arguments.peer_id,
+        metadataPath=arguments.metadata,
+        peersPath=arguments.peers,
+        sourcePath=arguments.seed_file
+    )
     node.start()
