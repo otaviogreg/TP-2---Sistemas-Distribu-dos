@@ -1,6 +1,7 @@
 import json
 import os
 import hashlib
+import re
 import sys
 
 class Metadata:
@@ -20,18 +21,44 @@ class Metadata:
         with open(jsonPath, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
+        if not isinstance(data, dict):
+            raise ValueError("O arquivo de metadados deve conter um objeto JSON.")
+
         requiredFields = ("fileName", "fileSize", "blockSize", "totalBlocks", "fileHash", "blockHashes")
         missingFields = [field for field in requiredFields if field not in data]
         if missingFields:
             raise ValueError(f"Metadados incompletos: {', '.join(missingFields)}")
+
+        fileName = data["fileName"]
+        fileSize = data["fileSize"]
+        blockSize = data["blockSize"]
+        totalBlocks = data["totalBlocks"]
+        fileHash = data["fileHash"]
+        blockHashes = data["blockHashes"]
+
+        if not isinstance(fileName, str) or not fileName or os.path.basename(fileName) != fileName:
+            raise ValueError("O nome do arquivo nos metadados e invalido.")
+        if type(fileSize) is not int or fileSize < 0:
+            raise ValueError("O tamanho do arquivo nos metadados e invalido.")
+        if type(blockSize) is not int or blockSize <= 0:
+            raise ValueError("O tamanho do bloco nos metadados e invalido.")
+        expectedBlocks = (fileSize + blockSize - 1) // blockSize
+        if type(totalBlocks) is not int or totalBlocks != expectedBlocks:
+            raise ValueError("A quantidade de blocos nao corresponde ao tamanho do arquivo.")
+        if not isinstance(fileHash, str) or re.fullmatch(r"[0-9a-f]{64}", fileHash) is None:
+            raise ValueError("O hash SHA-256 do arquivo nos metadados e invalido.")
+        if not isinstance(blockHashes, list) or len(blockHashes) != totalBlocks:
+            raise ValueError("A lista de hashes dos blocos nao corresponde aos metadados.")
+        if any(not isinstance(blockHash, str) or re.fullmatch(r"[0-9a-f]{64}", blockHash) is None for blockHash in blockHashes):
+            raise ValueError("Um ou mais hashes SHA-256 de bloco sao invalidos.")
             
         return cls(
-            fileName=data["fileName"],
-            fileSize=data["fileSize"],
-            blockSize=data["blockSize"],
-            totalBlocks=data["totalBlocks"],
-            fileHash=data["fileHash"],
-            blockHashes=data["blockHashes"]
+            fileName=fileName,
+            fileSize=fileSize,
+            blockSize=blockSize,
+            totalBlocks=totalBlocks,
+            fileHash=fileHash,
+            blockHashes=blockHashes
         )
 
     @classmethod
