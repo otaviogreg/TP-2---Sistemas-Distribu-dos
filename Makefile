@@ -1,3 +1,7 @@
+ARQUIVO ?=
+PORTA ?= 8080
+TAMANHO_BLOCO ?= 1024
+
 ifeq ($(OS),Windows_NT)
 PYTHON ?= python
 else
@@ -10,4 +14,9 @@ instalar:
 	$(PYTHON) -m pip install -r requirements.txt
 
 executar: instalar
-	$(PYTHON) peer.py
+ifeq ($(strip $(ARQUIVO)),)
+	$(PYTHON) peer.py $(PORTA) false
+else
+	$(PYTHON) metadata.py "$(ARQUIVO)" $(TAMANHO_BLOCO)
+	$(PYTHON) peer.py $(PORTA) true "$(ARQUIVO)"
+endif

@@ -5,7 +5,7 @@ import os
 from metadata import Metadata
 
 class PeerNode:
-    def __init__(self, host, port, metadataPath, isSeeder=False):
+    def __init__(self, host, port, metadataPath, isSeeder=False, sourcePath=None):
         self.host = host
         self.port = port
         self.metadata = Metadata.fromJsonFile(metadataPath)
@@ -13,15 +13,14 @@ class PeerNode:
         self.hasBlock = [isSeeder for _ in range(self.metadata.totalBlocks)]
         self.lock = threading.Lock()
         
-        self.fileName = self.metadata.fileName
         if self.isSeeder:
-            if not os.path.exists(self.fileName):
-                with open(self.fileName, "wb") as f:
-                    f.write(os.urandom(self.metadata.fileSize))
+            if not sourcePath or not os.path.isfile(sourcePath):
+                raise FileNotFoundError("Informe um arquivo existente para iniciar o seeder.")
+            self.fileName = sourcePath
         else:
             self.fileName = "downloaded_" + self.metadata.fileName
             with open(self.fileName, "wb") as f:
-                f.write(b"\x00" * self.metadata.fileSize)
+                f.truncate(self.metadata.fileSize)
 
     def handleIncomingConnection(self, clientSocket, clientAddress):
         try:
@@ -38,7 +37,7 @@ class PeerNode:
                         hasIt = self.hasBlock[blockIndex]
                     
                     if hasIt:
-                        with open(self.metadata.fileName, "rb") as f:
+                        with open(self.fileName, "rb") as f:
                             f.seek(blockIndex * self.metadata.blockSize)
                             blockData = f.read(self.metadata.blockSize)
                         clientSocket.sendall(blockData)
@@ -117,6 +116,7 @@ class PeerNode:
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     isSeeder = sys.argv[2].lower() == "true" if len(sys.argv) > 2 else False
+    sourcePath = sys.argv[3] if len(sys.argv) > 3 else None
     
-    node = PeerNode("0.0.0.0", port, "metadata.json", isSeeder)
+    node = PeerNode("0.0.0.0", port, "metadata.json", isSeeder, sourcePath)
     node.start()
