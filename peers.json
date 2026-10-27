@@ -1,0 +1,24 @@
+{
+  "peers": [
+    {
+      "id": "peer1",
+      "host": "",
+      "port": null
+    },
+    {
+      "id": "peer2",
+      "host": "",
+      "port": null
+    },
+    {
+      "id": "peer3",
+      "host": "",
+      "port": null
+    },
+    {
+      "id": "peer4",
+      "host": "",
+      "port": null
+    }
+  ]
+}

@@ -24,25 +24,38 @@ class PeerNode:
 
     def handleIncomingConnection(self, clientSocket, clientAddress):
         try:
-            while True:
-                data = clientSocket.recv(4096)
-                if not data:
-                    break
-                
-                message = data.decode("utf-8", errors="ignore")
-                if message.startswith("GET_BLOCK:"):
-                    blockIndex = int(message.split(":")[1])
-                    
-                    with self.lock:
-                        hasIt = self.hasBlock[blockIndex]
-                    
-                    if hasIt:
-                        with open(self.fileName, "rb") as f:
-                            f.seek(blockIndex * self.metadata.blockSize)
-                            blockData = f.read(self.metadata.blockSize)
-                        clientSocket.sendall(blockData)
-                    else:
-                        clientSocket.sendall(b"")
+            requestData = b""
+            while b"\n" not in requestData and len(requestData) < 128:
+                packet = clientSocket.recv(128 - len(requestData))
+                if not packet:
+                    return
+                requestData += packet
+
+            if b"\n" not in requestData:
+                return
+
+            message = requestData.split(b"\n", 1)[0].decode("utf-8")
+            command, blockIndexText = message.split(":", 1)
+            if command != "GET_BLOCK":
+                return
+
+            blockIndex = int(blockIndexText)
+            if blockIndex < 0 or blockIndex >= self.metadata.totalBlocks:
+                return
+
+            with self.lock:
+                hasIt = self.hasBlock[blockIndex]
+
+            if hasIt:
+                expectedBlockSize = min(
+                    self.metadata.blockSize,
+                    self.metadata.fileSize - blockIndex * self.metadata.blockSize
+                )
+                with open(self.fileName, "rb") as f:
+                    f.seek(blockIndex * self.metadata.blockSize)
+                    blockData = f.read(expectedBlockSize)
+                if len(blockData) == expectedBlockSize:
+                    clientSocket.sendall(blockData)
         except Exception:
             pass
         finally:
@@ -68,20 +81,28 @@ class PeerNode:
         server.close()
 
     def requestBlock(self, peerHost, peerPort, blockIndex):
+        if blockIndex < 0 or blockIndex >= self.metadata.totalBlocks:
+            print(f"Bloco {blockIndex} invalido.")
+            return
+
+        expectedBlockSize = min(
+            self.metadata.blockSize,
+            self.metadata.fileSize - blockIndex * self.metadata.blockSize
+        )
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             client.connect((peerHost, peerPort))
-            requestMsg = f"GET_BLOCK:{blockIndex}"
+            requestMsg = f"GET_BLOCK:{blockIndex}\n"
             client.sendall(requestMsg.encode("utf-8"))
             
             blockData = b""
-            while len(blockData) < self.metadata.blockSize:
-                packet = client.recv(self.metadata.blockSize - len(blockData))
+            while len(blockData) < expectedBlockSize:
+                packet = client.recv(expectedBlockSize - len(blockData))
                 if not packet:
                     break
                 blockData += packet
             
-            if blockData:
+            if len(blockData) == expectedBlockSize:
                 with open(self.fileName, "r+b") as f:
                     f.seek(blockIndex * self.metadata.blockSize)
                     f.write(blockData)
@@ -90,7 +111,7 @@ class PeerNode:
                     self.hasBlock[blockIndex] = True
                 print(f"Bloco {blockIndex} baixado e salvo com sucesso.")
             else:
-                print(f"Bloco {blockIndex} nao encontrado no peer.")
+                print(f"Bloco {blockIndex} nao encontrado ou recebido incompleto.")
         except Exception as e:
             print(f"Erro ao baixar bloco: {e}")
         finally:
