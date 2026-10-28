@@ -1,11 +1,29 @@
+"""Cria, valida e serializa os metadados usados na transferência de arquivos."""
+
 import json
 import os
 import hashlib
 import re
 import sys
 
+
 class Metadata:
+    """Representa um arquivo dividido em blocos e seus hashes de integridade.
+
+    @class Metadata
+    """
+
     def __init__(self, fileName: str, fileSize: int, blockSize: int, totalBlocks: int, fileHash: str, blockHashes: list = None):
+        """Inicializa os metadados de um arquivo.
+
+        @param {str} fileName Nome base do arquivo transferido.
+        @param {int} fileSize Tamanho total do arquivo em bytes.
+        @param {int} blockSize Tamanho máximo de cada bloco em bytes.
+        @param {int} totalBlocks Quantidade de blocos do arquivo.
+        @param {str} fileHash Hash SHA-256 do arquivo completo.
+        @param {list[str] | None} blockHashes Hash SHA-256 de cada bloco.
+        @returns {None}
+        """
         self.fileName = fileName
         self.fileSize = fileSize
         self.blockSize = blockSize
@@ -15,6 +33,15 @@ class Metadata:
 
     @classmethod
     def fromJsonFile(cls, jsonPath: str):
+        """Carrega e valida os metadados de um arquivo JSON.
+
+        @param {type[Metadata]} cls Classe usada para construir a instância.
+        @param {str} jsonPath Caminho do arquivo JSON de metadados.
+        @returns {Metadata} Metadados validados.
+        @throws {FileNotFoundError} Se o caminho não existir.
+        @throws {json.JSONDecodeError} Se o conteúdo não for JSON válido.
+        @throws {ValueError} Se os campos ou valores forem inconsistentes.
+        """
         if not os.path.exists(jsonPath):
             raise FileNotFoundError(f"Arquivo de metadados não encontrado: {jsonPath}")
             
@@ -42,6 +69,7 @@ class Metadata:
             raise ValueError("O tamanho do arquivo nos metadados e invalido.")
         if type(blockSize) is not int or blockSize <= 0:
             raise ValueError("O tamanho do bloco nos metadados e invalido.")
+        # A divisão inteira arredondada para cima inclui o último bloco parcial.
         expectedBlocks = (fileSize + blockSize - 1) // blockSize
         if type(totalBlocks) is not int or totalBlocks != expectedBlocks:
             raise ValueError("A quantidade de blocos nao corresponde ao tamanho do arquivo.")
@@ -63,6 +91,16 @@ class Metadata:
 
     @classmethod
     def fromFile(cls, filePath: str, blockSize: int = 1024):
+        """Gera metadados lendo o arquivo em blocos binários.
+
+        @param {type[Metadata]} cls Classe usada para construir a instância.
+        @param {str} filePath Caminho do arquivo de origem.
+        @param {int} blockSize Tamanho máximo de cada bloco em bytes.
+        @returns {Metadata} Nome, tamanho e hashes calculados.
+        @throws {ValueError} Se o tamanho do bloco não for positivo.
+        @throws {FileNotFoundError} Se o arquivo de origem não existir.
+        @throws {OSError} Se ocorrer um erro durante a leitura.
+        """
         if blockSize <= 0:
             raise ValueError("O tamanho do bloco deve ser maior que zero.")
         if not os.path.isfile(filePath):
@@ -73,6 +111,7 @@ class Metadata:
         fileSize = 0
 
         with open(filePath, "rb") as sourceFile:
+            # O hash geral é acumulado em fluxo, sem carregar o arquivo inteiro na memória.
             while True:
                 blockData = sourceFile.read(blockSize)
                 if not blockData:
@@ -91,6 +130,10 @@ class Metadata:
         )
 
     def toDict(self):
+        """Retorna os metadados no formato usado pelo JSON.
+
+        @returns {dict} Dicionário com os campos de metadados e os hashes.
+        """
         return {
             "fileName": self.fileName,
             "fileSize": self.fileSize,
@@ -101,16 +144,23 @@ class Metadata:
         }
 
     def toJsonFile(self, jsonPath: str):
+        """Grava os metadados em um arquivo JSON formatado.
+
+        @param {str} jsonPath Caminho de destino do arquivo JSON.
+        @returns {None}
+        @throws {OSError} Se o arquivo não puder ser criado ou gravado.
+        """
         with open(jsonPath, "w", encoding="utf-8") as metadataFile:
             json.dump(self.toDict(), metadataFile, indent=2, ensure_ascii=False)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (2, 3):
-        raise SystemExit("Uso: python metadata.py <arquivo> [tamanho_bloco]")
+    if len(sys.argv) not in (2, 3, 4):
+        raise SystemExit("Uso: python metadata.py <arquivo> [tamanho_bloco] [caminho_metadados]")
 
     inputFile = sys.argv[1]
-    blockSize = int(sys.argv[2]) if len(sys.argv) == 3 else 1024
+    blockSize = int(sys.argv[2]) if len(sys.argv) >= 3 else 1024
+    metadataPath = sys.argv[3] if len(sys.argv) == 4 else "metadata.json"
     metadata = Metadata.fromFile(inputFile, blockSize)
-    metadata.toJsonFile("metadata.json")
-    print(f"Metadados de {metadata.fileName} gravados em metadata.json.")
+    metadata.toJsonFile(metadataPath)
+    print(f"Metadados de {metadata.fileName} gravados em {metadataPath}.")

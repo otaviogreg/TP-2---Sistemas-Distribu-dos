@@ -24,7 +24,7 @@ executar: instalar
 ifeq ($(strip $(ARQUIVO)),)
 	$(PYTHON) peer.py --peer-id "$(PEER_ID)" --peers "$(PEERS_FILE)" --metadata "$(METADATA_FILE)"
 else
-	$(PYTHON) metadata.py "$(ARQUIVO)" $(TAMANHO_BLOCO)
+	$(PYTHON) metadata.py "$(ARQUIVO)" $(TAMANHO_BLOCO) "$(METADATA_FILE)"
 	$(PYTHON) peer.py --peer-id "$(PEER_ID)" --peers "$(PEERS_FILE)" --metadata "$(METADATA_FILE)" --seed-file "$(ARQUIVO)"
 endif
 endif

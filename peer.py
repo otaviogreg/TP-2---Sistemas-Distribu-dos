@@ -1,3 +1,5 @@
+"""Implementa o peer TCP que anuncia, baixa e compartilha blocos de um arquivo."""
+
 import argparse
 import hashlib
 import json
@@ -10,6 +12,14 @@ from metadata import Metadata
 
 
 class PeerNode:
+    """Representa um nó que pode baixar e servir blocos para outros peers.
+
+    O peer usa uma lista estática de vizinhos e o mapa local de blocos para
+    decidir o que pode servir ou ainda precisa baixar.
+
+    @class PeerNode
+    """
+
     CONNECT_TIMEOUT = 3
     SOCKET_TIMEOUT = 10
     MAX_HEADER_SIZE = 4096
@@ -17,6 +27,16 @@ class PeerNode:
     DOWNLOAD_RETRY_DELAY = 2
 
     def __init__(self, peerId, metadataPath, peersPath, sourcePath=None):
+        """Inicializa o peer, seus metadados, vizinhos e arquivo local.
+
+        @param {str} peerId Identificador desta instância em peers.json.
+        @param {str} metadataPath Caminho para os metadados compartilhados.
+        @param {str} peersPath Caminho para a lista estática de peers.
+        @param {str | None} sourcePath Arquivo completo que define o seeder.
+        @returns {None}
+        @throws {FileNotFoundError} Se um arquivo necessário não existir.
+        @throws {ValueError} Se os metadados ou a configuração de peers forem inválidos.
+        """
         if isinstance(peerId, str):
             peerId = peerId.strip()
         self.peerId = peerId
@@ -47,6 +67,15 @@ class PeerNode:
 
     @staticmethod
     def _loadPeerConfig(peersPath, peerId):
+        """Carrega a porta local e os vizinhos configurados.
+
+        @param {str} peersPath Caminho do arquivo de configuração.
+        @param {str} peerId ID que identifica este peer na lista.
+        @returns {tuple[int, str, list[dict]]} Porta local, host anunciado e vizinhos ativos.
+        @throws {OSError} Se o arquivo não puder ser lido.
+        @throws {json.JSONDecodeError} Se o arquivo não for JSON válido.
+        @throws {ValueError} Se o peer local ou uma entrada preenchida for inválida.
+        """
         with open(peersPath, "r", encoding="utf-8") as peersFile:
             configuration = json.load(peersFile)
 
@@ -81,6 +110,7 @@ class PeerNode:
                 continue
 
             if not host and port is None:
+                # Vizinhos ainda não preenchidos podem permanecer no modelo compartilhado.
                 continue
             if not isinstance(host, str) or not host.strip() or type(port) is not int or not 1 <= port <= 65535:
                 raise ValueError(f"Configuração inválida para o peer '{currentId}'.")
@@ -89,12 +119,23 @@ class PeerNode:
         return localPeer["port"], localPeer["host"].strip(), activePeers
 
     def _expectedBlockSize(self, blockIndex):
+        """Calcula o tamanho esperado, incluindo o último bloco parcial.
+
+        @param {int} blockIndex Índice do bloco dentro do arquivo.
+        @returns {int} Quantidade de bytes esperada para o bloco.
+        """
         return min(
             self.metadata.blockSize,
             self.metadata.fileSize - blockIndex * self.metadata.blockSize
         )
 
     def _verifySourceFile(self):
+        """Confere tamanho e hashes da origem antes de disponibilizá-la.
+
+        @returns {None}
+        @throws {ValueError} Se o arquivo não corresponder aos metadados.
+        @throws {OSError} Se o arquivo não puder ser lido.
+        """
         if os.path.getsize(self.fileName) != self.metadata.fileSize:
             raise ValueError("O tamanho do arquivo não corresponde aos metadados.")
 
@@ -116,10 +157,25 @@ class PeerNode:
 
     @staticmethod
     def _sendMessage(connection, message):
+        """Serializa uma mensagem JSON e a envia terminada por nova linha.
+
+        @param {socket.socket} connection Conexão TCP de destino.
+        @param {dict} message Mensagem de protocolo a serializar.
+        @returns {None}
+        @throws {OSError} Se o envio pela conexão falhar.
+        """
         encodedMessage = json.dumps(message, separators=(",", ":")).encode("utf-8") + b"\n"
         connection.sendall(encodedMessage)
 
     def _receiveMessage(self, connection):
+        """Lê um cabeçalho JSON delimitado por nova linha.
+
+        @param {socket.socket} connection Conexão TCP de origem.
+        @returns {dict} Mensagem JSON recebida.
+        @throws {ConnectionError} Se a conexão fechar antes do delimitador.
+        @throws {ValueError} Se o JSON for inválido ou exceder o limite.
+        @throws {OSError} Se a leitura da conexão falhar.
+        """
         messageData = bytearray()
         while len(messageData) < self.MAX_HEADER_SIZE:
             packet = connection.recv(1)
@@ -133,11 +189,20 @@ class PeerNode:
                 if not isinstance(message, dict):
                     raise ValueError("A mensagem de protocolo precisa ser um objeto JSON.")
                 return message
+            # Ler um byte por vez evita consumir por engano o início do payload binário.
             messageData.extend(packet)
         raise ValueError("Cabeçalho de protocolo excedeu o tamanho máximo.")
 
     @staticmethod
     def _receiveExact(connection, expectedSize):
+        """Lê exatamente a quantidade de bytes indicada pelo cabeçalho.
+
+        @param {socket.socket} connection Conexão TCP de origem.
+        @param {int} expectedSize Número de bytes que devem ser lidos.
+        @returns {bytes} Payload completo.
+        @throws {ConnectionError} Se a conexão fechar antes do fim do payload.
+        @throws {OSError} Se a leitura da conexão falhar.
+        """
         receivedData = bytearray()
         while len(receivedData) < expectedSize:
             packet = connection.recv(expectedSize - len(receivedData))
@@ -147,6 +212,13 @@ class PeerNode:
         return bytes(receivedData)
 
     def _sendError(self, connection, blockIndex, reason):
+        """Envia uma resposta de erro padronizada ao solicitante.
+
+        @param {socket.socket} connection Conexão TCP do solicitante.
+        @param {int | None} blockIndex Índice relacionado ao erro, se conhecido.
+        @param {str} reason Descrição curta do motivo da recusa.
+        @returns {None}
+        """
         self._sendMessage(connection, {
             "type": "ERROR",
             "blockIndex": blockIndex,
@@ -154,6 +226,12 @@ class PeerNode:
         })
 
     def handleIncomingConnection(self, clientSocket, clientAddress):
+        """Atende uma requisição de bloco e espera seu ACK de validação.
+
+        @param {socket.socket} clientSocket Conexão TCP aceita pelo listener.
+        @param {tuple} clientAddress Endereço remoto informado pelo sistema.
+        @returns {None}
+        """
         with clientSocket:
             clientSocket.settimeout(self.SOCKET_TIMEOUT)
             blockIndex = None
@@ -212,10 +290,16 @@ class PeerNode:
                 print(f"Conexão com {clientAddress} encerrada: {error}")
 
     def startListener(self):
+        """Abre o socket servidor e distribui conexões para threads independentes.
+
+        @returns {None}
+        Erros de abertura são registrados e encerram o listener.
+        """
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.settimeout(1)
         try:
+            # O bind aceita conexões externas; o host anunciado vem da configuração.
             server.bind((self.host, self.port))
             server.listen()
             self.listenerReady.set()
@@ -240,6 +324,12 @@ class PeerNode:
             server.close()
 
     def requestBlock(self, peer, blockIndex):
+        """Solicita, valida, salva e confirma um bloco a um vizinho.
+
+        @param {dict} peer Entrada do vizinho com ID, host e porta.
+        @param {int} blockIndex Índice do bloco solicitado.
+        @returns {"received" | "unavailable" | "failed"} Resultado da tentativa.
+        """
         if type(blockIndex) is not int or blockIndex < 0 or blockIndex >= self.metadata.totalBlocks:
             print(f"Índice de bloco inválido: {blockIndex}.")
             return "failed"
@@ -278,11 +368,13 @@ class PeerNode:
 
             with self.lock:
                 with open(self.fileName, "r+b") as downloadedFile:
+                    # O deslocamento mantém os blocos na ordem original do arquivo.
                     downloadedFile.seek(blockIndex * self.metadata.blockSize)
                     downloadedFile.write(blockData)
                     downloadedFile.flush()
                 self.hasBlock[blockIndex] = True
 
+            # O ACK só é enviado depois que o checksum confere e o bloco foi gravado.
             try:
                 self._sendMessage(client, {
                     "type": "ACK",
@@ -312,6 +404,10 @@ class PeerNode:
             client.close()
 
     def _roleName(self):
+        """Determina o papel atual com base nos blocos disponíveis localmente.
+
+        @returns {str} "leecher", "leecher/seeder parcial" ou "seeder".
+        """
         with self.lock:
             availableBlocks = list(self.hasBlock)
         if all(availableBlocks):
@@ -321,6 +417,10 @@ class PeerNode:
         return "leecher"
 
     def startDownload(self):
+        """Inicia uma rodada automática de download em segundo plano.
+
+        @returns {None}
+        """
         if self.isSeeder:
             print("Este peer já possui o arquivo de origem completo.")
             return
@@ -340,6 +440,13 @@ class PeerNode:
         self.downloadThread.start()
 
     def downloadMissingBlocks(self):
+        """Tenta obter todos os blocos faltantes dos vizinhos e repete a varredura.
+
+        Peer que falhou em uma conexão é ignorado no restante da rodada, evitando
+        que o timeout desse vizinho seja repetido para cada bloco.
+
+        @returns {None}
+        """
         try:
             for roundNumber in range(1, self.MAX_DOWNLOAD_ROUNDS + 1):
                 with self.lock:
@@ -348,6 +455,7 @@ class PeerNode:
                     self.verifyCompleteFile()
                     return
 
+                # Um peer que falhou não precisa causar timeout para cada bloco da rodada.
                 failedPeers = set()
                 downloadedAny = False
                 for blockIndex in missingBlocks:
@@ -381,6 +489,11 @@ class PeerNode:
             self.downloadLock.release()
 
     def verifyCompleteFile(self):
+        """Valida blocos, tamanho e SHA-256 do arquivo montado.
+
+        @returns {bool} True quando o arquivo completo corresponde aos metadados.
+        @throws {OSError} Se o arquivo local não puder ser lido.
+        """
         with self.lock:
             allBlocksAvailable = all(self.hasBlock)
         if not allBlocksAvailable:
@@ -418,6 +531,13 @@ class PeerNode:
         return True
 
     def start(self):
+        """Inicia o listener, dispara o download e processa comandos do usuário.
+
+        O download começa automaticamente para um leecher; os comandos `baixar`,
+        `status` e `sair` permitem repetir a tentativa, consultar blocos e encerrar.
+
+        @returns {None}
+        """
         listenerThread = threading.Thread(target=self.startListener, daemon=True)
         listenerThread.start()
         if not self.listenerReady.wait(timeout=5):
