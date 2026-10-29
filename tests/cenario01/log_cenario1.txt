@@ -1,4 +1,5 @@
-make executar PEER_ID=peer2  
+make executar PEER_ID=peer2 
+ 
 python -m pip install -r requirements.txt                                                                         
 
 python peer.py --peer-id "peer2" --peers "peers.json" --metadata "metadata.json"
