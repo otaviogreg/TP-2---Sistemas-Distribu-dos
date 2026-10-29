@@ -1,24 +1,24 @@
 {
-  "peers": [
-    {
-      "id": "peer1",
-      "host": "",
-      "port": null
-    },
-    {
-      "id": "peer2",
-      "host": "",
-      "port": null
-    },
-    {
-      "id": "peer3",
-      "host": "",
-      "port": null
-    },
-    {
-      "id": "peer4",
-      "host": "",
-      "port": null
-    }
-  ]
+	"peers": [
+		{
+			"id": "peer1",
+			"host": "127.0.0.1",
+			"port": 5001
+		},
+		{
+			"id": "peer2",
+			"host": "127.0.0.1",
+			"port": 5002
+		},
+		{
+			"id": "peer3",
+			"host": "127.0.0.1",
+			"port": 5003
+		},
+		{
+			"id": "peer4",
+			"host": "127.0.0.1",
+			"port": 5004
+		}
+	]
 }

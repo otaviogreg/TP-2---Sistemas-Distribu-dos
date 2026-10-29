@@ -1,0 +1,27 @@
+make executar PEER_ID=peer2  
+python -m pip install -r requirements.txt                                                                         
+
+python peer.py --peer-id "peer2" --peers "peers.json" --metadata "metadata.json"
+Peer escutando em 0.0.0.0:5002.
+Peer peer2 ativo em 127.0.0.1:5002.
+Papel atual: leecher.
+Comandos: baixar, status, sair
+Bloco 0 recebido, verificado e confirmado.
+Bloco 1 recebido, verificado e confirmado.
+Bloco 2 recebido, verificado e confirmado.
+Bloco 3 recebido, verificado e confirmado.
+Bloco 4 recebido, verificado e confirmado.
+Bloco 5 recebido, verificado e confirmado.
+Bloco 6 recebido, verificado e confirmado.
+Bloco 7 recebido, verificado e confirmado.
+Bloco 8 recebido, verificado e confirmado.
+Bloco 9 recebido, verificado e confirmado.
+Bloco 10 recebido, verificado e confirmado.
+Bloco 11 recebido, verificado e confirmado.
+Bloco 12 recebido, verificado e confirmado.
+Bloco 13 recebido, verificado e confirmado.
+Bloco 14 recebido, verificado e confirmado.
+Arquivo file_a.bin concluído e verificado com SHA-256.
+status
+Peer peer2 | papel: seeder | blocos: [True, True, True, True, True, True, True, True, True, True, True, True, True, True,True]
+sair
