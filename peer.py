@@ -57,7 +57,7 @@ class PeerNode:
             self.fileName = sourcePath
             self._verifySourceFile()
         else:
-            self.fileName = "downloaded_" + self.metadata.fileName
+            self.fileName = f"{self.peerId}_downloaded_{self.metadata.fileName}"
             with open(self.fileName, "wb") as downloadedFile:
                 downloadedFile.truncate(self.metadata.fileSize)
 
@@ -392,9 +392,15 @@ class PeerNode:
                 ackConfirmed = False
 
             if not ackConfirmed:
-                print(f"Bloco {blockIndex} foi verificado e salvo, mas o peer não confirmou o ACK.")
+                print(
+                    f"Bloco {blockIndex} recebido de {peer['id']}, "
+                    "verificado e salvo, mas o peer não confirmou o ACK."
+                )
             else:
-                print(f"Bloco {blockIndex} recebido, verificado e confirmado.")
+                print(
+                    f"Bloco {blockIndex} recebido de {peer['id']}, "
+                    "verificado e confirmado."
+                )
 
             return "received"
         except (OSError, ValueError, ConnectionError, socket.timeout) as error:
