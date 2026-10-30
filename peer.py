@@ -7,9 +7,9 @@ import os
 import socket
 import threading
 import time
+import random 
 
 from metadata import Metadata
-
 
 class PeerNode:
     """Representa um nó que pode baixar e servir blocos para outros peers.
@@ -467,7 +467,12 @@ class PeerNode:
                 for blockIndex in missingBlocks:
                     if self.stopEvent.is_set():
                         return
-                    for peer in self.peers:
+                    
+                    # Cria uma cópia da lista de peers e a embaralha aleatoriamente
+                    shuffledPeers = list(self.peers)
+                    random.shuffle(shuffledPeers)
+
+                    for peer in shuffledPeers:
                         if peer["id"] in failedPeers:
                             continue
                         result = self.requestBlock(peer, blockIndex)
@@ -584,7 +589,6 @@ class PeerNode:
             listenerThread.join(timeout=2)
             if self.downloadThread:
                 self.downloadThread.join(timeout=2)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
