@@ -1,0 +1,11 @@
+python -m pip install -r requirements.txt
+
+[notice] A new release of pip is available: 26.1.1 -> 26.2.2
+[notice] To update, run: python.exe -m pip install --upgrade pip
+python metadata.py "source.bin" 4096 "metadata.json"
+Metadados de source.bin gravados em metadata.json.
+python peer.py --peer-id "peer1" --peers "peers.json" --metadata "metadata.json" --seed-file "source.bin"
+Peer escutando em 0.0.0.0:5001.Peer peer1 ativo em 127.0.0.1:5001.
+
+Papel atual: seeder.
+Comandos: baixar, status, sair

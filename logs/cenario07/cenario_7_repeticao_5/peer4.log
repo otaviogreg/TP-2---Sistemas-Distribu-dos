@@ -1,0 +1,25 @@
+python -m pip install -r requirements.txt
+
+[notice] A new release of pip is available: 26.1.1 -> 26.2.2
+[notice] To update, run: python.exe -m pip install --upgrade pip
+python peer.py --peer-id "peer4" --peers "peers.json" --metadata "metadata.json"
+Peer escutando em 0.0.0.0:5004.Peer peer4 ativo em 127.0.0.1:5004.
+
+Papel atual: leecher.
+Comandos: baixar, status, sair
+Bloco 0 recebido de peer1, verificado e confirmado.
+Bloco 1 recebido de peer1, verificado e confirmado.
+Bloco 2 recebido de peer1, verificado e confirmado.
+Bloco 3 recebido de peer2, verificado e confirmado.
+Bloco 4 recebido de peer1, verificado e confirmado.
+Bloco 5 recebido de peer1, verificado e confirmado.
+Bloco 6 recebido de peer2, verificado e confirmado.
+Bloco 7 recebido de peer2, verificado e confirmado.
+Bloco 8 recebido de peer1, verificado e confirmado.
+Bloco 9 recebido de peer1, verificado e confirmado.
+Bloco 10 recebido de peer2, verificado e confirmado.
+Bloco 11 recebido de peer2, verificado e confirmado.
+Bloco 12 recebido de peer2, verificado e confirmado.
+Bloco 13 recebido de peer1, verificado e confirmado.
+Bloco 14 recebido de peer2, verificado e confirmado.
+Arquivo source.bin concluído e verificado com SHA-256.
